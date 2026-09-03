@@ -574,25 +574,6 @@ scrubberEl.addEventListener('change', () => {
    Sync: export / import library as a single file
    --------------------------------------------------------- */
 
-function blobToDataURL(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-function dataURLtoBlob(dataURL) {
-  const [header, base64] = dataURL.split(',');
-  const mimeMatch = header.match(/:(.*?);/);
-  const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
-  const binary = atob(base64);
-  const buffer = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) buffer[i] = binary.charCodeAt(i);
-  return new Blob([buffer], { type: mime });
-}
-
 async function exportLibrary() {
   if (!songs.length && !playlists.length) {
     showToast('Thư viện đang trống, chưa có gì để xuất');
@@ -600,24 +581,31 @@ async function exportLibrary() {
   }
   const subEl = document.getElementById('sync-export-sub');
   const originalSub = subEl.textContent;
-  subEl.textContent = `Đang chuẩn bị... (0/${songs.length})`;
+  subEl.textContent = 'Đang chuẩn bị file...';
 
-  const songsData = [];
-  for (let i = 0; i < songs.length; i++) {
-    const s = songs[i];
-    const data = await blobToDataURL(s.blob);
-    songsData.push({ id: s.id, name: s.name, type: s.type, size: s.size, duration: s.duration, addedAt: s.addedAt, data });
-    subEl.textContent = `Đang chuẩn bị... (${i + 1}/${songs.length})`;
-  }
+  // Manifest holds metadata only (no audio bytes) — audio blobs are appended
+  // to the file directly afterwards, in the same order, with no re-encoding.
+  const manifest = {
+    version: 2,
+    exportedAt: Date.now(),
+    songs: songs.map(s => ({
+      id: s.id, name: s.name, type: s.type, size: s.blob.size,
+      duration: s.duration, addedAt: s.addedAt
+    })),
+    playlists
+  };
+  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+  const lenPrefix = new Uint8Array(4);
+  new DataView(lenPrefix.buffer).setUint32(0, manifestBytes.byteLength, true);
 
-  const payload = { version: 1, exportedAt: Date.now(), songs: songsData, playlists };
-  const json = JSON.stringify(payload);
-  const blob = new Blob([json], { type: 'application/json' });
+  const parts = [lenPrefix, manifestBytes, ...songs.map(s => s.blob)];
+  const blob = new Blob(parts, { type: 'application/octet-stream' });
+
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   const dateStr = new Date().toISOString().slice(0, 10);
   a.href = url;
-  a.download = `nhac-cua-toi-${dateStr}.json`;
+  a.download = `nhac-cua-toi-${dateStr}.nhacbak`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -629,49 +617,56 @@ async function exportLibrary() {
 
 async function importLibraryFromFile(file) {
   showToast('Đang đọc file...');
-  let payload;
   try {
-    const text = await file.text();
-    payload = JSON.parse(text);
+    const lenBuf = await file.slice(0, 4).arrayBuffer();
+    const manifestLen = new DataView(lenBuf).getUint32(0, true);
+    const manifestText = await file.slice(4, 4 + manifestLen).text();
+    const manifest = JSON.parse(manifestText);
+
+    let offset = 4 + manifestLen;
+    const idMap = {};
+    let added = 0, skipped = 0;
+
+    for (const s of (manifest.songs || [])) {
+      // Slice the audio bytes straight out of the uploaded file — this is a
+      // cheap reference, not a full read into memory.
+      const songBlob = file.slice(offset, offset + s.size, s.type);
+      offset += s.size;
+
+      const dup = songs.find(existing => existing.name === s.name && existing.size === s.size);
+      if (dup) { idMap[s.id] = dup.id; skipped++; continue; }
+
+      const newSong = { name: s.name, type: s.type, size: s.size, blob: songBlob, duration: s.duration, addedAt: s.addedAt || Date.now() };
+      const newId = await addSong(newSong);
+      newSong.id = newId;
+      songs.push(newSong);
+      idMap[s.id] = newId;
+      added++;
+    }
+
+    for (const p of (manifest.playlists || [])) {
+      const mappedIds = (p.songIds || []).map(oldId => idMap[oldId]).filter(id => id != null);
+      const existingPl = playlists.find(pl => pl.name === p.name);
+      if (existingPl) {
+        existingPl.songIds = Array.from(new Set([...existingPl.songIds, ...mappedIds]));
+        await putPlaylist(existingPl);
+      } else {
+        const newPl = { name: p.name, songIds: mappedIds, createdAt: p.createdAt || Date.now() };
+        const newId = await addPlaylist(newPl);
+        newPl.id = newId;
+        playlists.push(newPl);
+      }
+    }
+
+    songs.sort((a, b) => b.addedAt - a.addedAt);
+    renderLibrary();
+    renderPlaylists();
+    showToast(`Đã nhập ${added} bài mới (bỏ qua ${skipped} bài trùng)`);
   } catch (err) {
     showToast('File không hợp lệ, không đọc được');
-    return;
   }
-
-  const idMap = {};
-  let added = 0, skipped = 0;
-
-  for (const s of (payload.songs || [])) {
-    const dup = songs.find(existing => existing.name === s.name && existing.size === s.size);
-    if (dup) { idMap[s.id] = dup.id; skipped++; continue; }
-    const blob = dataURLtoBlob(s.data);
-    const newSong = { name: s.name, type: s.type, size: s.size, blob, duration: s.duration, addedAt: s.addedAt || Date.now() };
-    const newId = await addSong(newSong);
-    newSong.id = newId;
-    songs.push(newSong);
-    idMap[s.id] = newId;
-    added++;
-  }
-
-  for (const p of (payload.playlists || [])) {
-    const mappedIds = (p.songIds || []).map(oldId => idMap[oldId]).filter(id => id != null);
-    const existingPl = playlists.find(pl => pl.name === p.name);
-    if (existingPl) {
-      existingPl.songIds = Array.from(new Set([...existingPl.songIds, ...mappedIds]));
-      await putPlaylist(existingPl);
-    } else {
-      const newPl = { name: p.name, songIds: mappedIds, createdAt: p.createdAt || Date.now() };
-      const newId = await addPlaylist(newPl);
-      newPl.id = newId;
-      playlists.push(newPl);
-    }
-  }
-
-  songs.sort((a, b) => b.addedAt - a.addedAt);
-  renderLibrary();
-  renderPlaylists();
-  showToast(`Đã nhập ${added} bài mới (bỏ qua ${skipped} bài trùng)`);
 }
+
 
 document.getElementById('export-btn').addEventListener('click', exportLibrary);
 document.getElementById('import-btn').addEventListener('click', () => {
