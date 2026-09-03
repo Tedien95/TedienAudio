@@ -319,6 +319,10 @@ document.getElementById('back-to-playlists').addEventListener('click', () => {
   switchView('view-playlists');
 });
 
+document.getElementById('export-playlist-btn').addEventListener('click', () => {
+  if (activePlaylistId != null) exportPlaylist(activePlaylistId);
+});
+
 document.getElementById('delete-playlist-btn').addEventListener('click', () => {
   const pl = playlists.find(p => p.id === activePlaylistId);
   if (!pl) return;
@@ -574,51 +578,50 @@ scrubberEl.addEventListener('change', () => {
    Sync: export / import library as a single file
    --------------------------------------------------------- */
 
-async function exportLibrary() {
-  if (!songs.length && !playlists.length) {
-    showToast('Thư viện đang trống, chưa có gì để xuất');
+async function exportBundle(songList, playlistList, fileNameBase, subEl) {
+  if (!songList.length && !playlistList.length) {
+    showToast('Không có gì để xuất');
     return;
   }
-  const subEl = document.getElementById('sync-export-sub');
-  const originalSub = subEl.textContent;
+  const originalSub = subEl ? subEl.textContent : null;
 
   // Manifest holds metadata only (no audio bytes) — audio blobs are appended
   // to the file directly afterwards, in the same order, with no re-encoding.
   const manifest = {
     version: 2,
     exportedAt: Date.now(),
-    songs: songs.map(s => ({
+    songs: songList.map(s => ({
       id: s.id, name: s.name, type: s.type, size: s.blob.size,
       duration: s.duration, addedAt: s.addedAt
     })),
-    playlists
+    playlists: playlistList
   };
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   const lenPrefix = new Uint8Array(4);
   new DataView(lenPrefix.buffer).setUint32(0, manifestBytes.byteLength, true);
   const dateStr = new Date().toISOString().slice(0, 10);
-  const fileName = `nhac-cua-toi-${dateStr}.nhacbak`;
+  const fileName = `${fileNameBase}-${dateStr}.nhacbak`;
 
   if (window.showSaveFilePicker) {
     // Best path: write straight to disk, one song at a time. The whole
-    // library is never held in memory at once, so this is safe for any size.
+    // bundle is never held in memory at once, so this is safe for any size.
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName: fileName,
-        types: [{ description: 'Sao lưu thư viện nhạc', accept: { 'application/octet-stream': ['.nhacbak'] } }]
+        types: [{ description: 'Sao lưu nhạc', accept: { 'application/octet-stream': ['.nhacbak'] } }]
       });
       const writable = await handle.createWritable();
       await writable.write(lenPrefix);
       await writable.write(manifestBytes);
-      for (let i = 0; i < songs.length; i++) {
-        subEl.textContent = `Đang ghi... (${i + 1}/${songs.length})`;
-        await writable.write(songs[i].blob);
+      for (let i = 0; i < songList.length; i++) {
+        if (subEl) subEl.textContent = `Đang ghi... (${i + 1}/${songList.length})`;
+        await writable.write(songList[i].blob);
       }
       await writable.close();
-      subEl.textContent = originalSub;
-      showToast('Đã xuất xong file thư viện');
+      if (subEl) subEl.textContent = originalSub;
+      showToast('Đã xuất xong file');
     } catch (err) {
-      subEl.textContent = originalSub;
+      if (subEl) subEl.textContent = originalSub;
       if (err && err.name === 'AbortError') return; // user closed the save dialog
       showToast('Xuất file thất bại, thử lại nhé');
     }
@@ -626,15 +629,15 @@ async function exportLibrary() {
   }
 
   // Fallback for browsers without the File System Access API (e.g. most
-  // mobile browsers). Fine for smaller libraries; very large ones may still
+  // mobile browsers). Fine for smaller bundles; very large ones may still
   // use noticeable memory since everything has to be joined before download.
-  const totalBytes = songs.reduce((sum, s) => sum + s.blob.size, 0);
+  const totalBytes = songList.reduce((sum, s) => sum + s.blob.size, 0);
   if (totalBytes > 300 * 1024 * 1024) {
-    const ok = confirm('Thư viện khá lớn và trình duyệt này không hỗ trợ ghi file trực tiếp, có thể tốn nhiều bộ nhớ. Vẫn muốn tiếp tục?');
+    const ok = confirm('Nội dung khá lớn và trình duyệt này không hỗ trợ ghi file trực tiếp, có thể tốn nhiều bộ nhớ. Vẫn muốn tiếp tục?');
     if (!ok) return;
   }
-  subEl.textContent = 'Đang chuẩn bị file...';
-  const parts = [lenPrefix, manifestBytes, ...songs.map(s => s.blob)];
+  if (subEl) subEl.textContent = 'Đang chuẩn bị file...';
+  const parts = [lenPrefix, manifestBytes, ...songList.map(s => s.blob)];
   const blob = new Blob(parts, { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -644,8 +647,21 @@ async function exportLibrary() {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-  subEl.textContent = originalSub;
-  showToast('Đã xuất xong file thư viện');
+  if (subEl) subEl.textContent = originalSub;
+  showToast('Đã xuất xong file');
+}
+
+function exportLibrary() {
+  const subEl = document.getElementById('sync-export-sub');
+  return exportBundle(songs, playlists, 'nhac-cua-toi', subEl);
+}
+
+function exportPlaylist(playlistId) {
+  const pl = playlists.find(p => p.id === playlistId);
+  if (!pl) return;
+  const plSongs = pl.songIds.map(id => songs.find(s => s.id === id)).filter(Boolean);
+  const safeName = pl.name.trim().replace(/[^\p{L}\p{N}\- ]/gu, '').replace(/\s+/g, '-') || 'playlist';
+  return exportBundle(plSongs, [pl], safeName, null);
 }
 
 async function importLibraryFromFile(file) {
