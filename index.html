@@ -70,6 +70,7 @@
   <nav class="tabs" role="tablist">
     <button class="tab active" data-tab="library" role="tab" aria-selected="true">Thư viện</button>
     <button class="tab" data-tab="playlists" role="tab" aria-selected="false">Playlist</button>
+    <button class="tab" data-tab="sync" role="tab" aria-selected="false">Đồng bộ</button>
   </nav>
 
   <!-- Library view -->
@@ -114,6 +115,29 @@
     </div>
     <ul class="track-list" id="playlist-detail-list"></ul>
     <button class="text-btn" id="add-songs-to-playlist-btn">+ Thêm bài từ thư viện</button>
+  </section>
+
+  <!-- Sync view (export / import library) -->
+  <section class="view" id="view-sync">
+    <div class="view-head">
+      <h2>Đồng bộ 2 máy</h2>
+    </div>
+    <p class="sync-desc">
+      Xuất toàn bộ nhạc và playlist thành 1 file, chuyển file đó qua thiết bị kia (Zalo gửi cho chính mình, Google Drive, dây cáp...) rồi bấm Nhập ở đó. Bài trùng tên và dung lượng sẽ tự bỏ qua, không bị nhân đôi.
+    </p>
+
+    <div class="sync-block">
+      <p class="sync-block-title">Xuất thư viện</p>
+      <p class="sync-block-sub" id="sync-export-sub">Tạo file chứa toàn bộ nhạc + playlist hiện có</p>
+      <button class="text-btn" id="export-btn">Xuất ra file</button>
+    </div>
+
+    <div class="sync-block">
+      <p class="sync-block-title">Nhập thư viện</p>
+      <p class="sync-block-sub">Chọn file đã xuất từ thiết bị kia</p>
+      <button class="text-btn" id="import-btn">Chọn file để nhập</button>
+      <input type="file" id="import-file-input" accept="application/json,.json" hidden>
+    </div>
   </section>
 
 </div>
