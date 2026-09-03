@@ -419,7 +419,7 @@ document.getElementById('picker-done').addEventListener('click', async () => {
 
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
-    const target = tab.dataset.tab === 'library' ? 'view-library' : 'view-playlists';
+    const target = `view-${tab.dataset.tab}`;
     document.querySelectorAll('.tab').forEach(t => {
       t.classList.toggle('active', t === tab);
       t.setAttribute('aria-selected', t === tab ? 'true' : 'false');
@@ -568,6 +568,119 @@ scrubberEl.addEventListener('change', () => {
     audioEl.currentTime = (scrubberEl.value / 100) * audioEl.duration;
   }
   isScrubbing = false;
+});
+
+/* ---------------------------------------------------------
+   Sync: export / import library as a single file
+   --------------------------------------------------------- */
+
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function dataURLtoBlob(dataURL) {
+  const [header, base64] = dataURL.split(',');
+  const mimeMatch = header.match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+  const binary = atob(base64);
+  const buffer = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) buffer[i] = binary.charCodeAt(i);
+  return new Blob([buffer], { type: mime });
+}
+
+async function exportLibrary() {
+  if (!songs.length && !playlists.length) {
+    showToast('Thư viện đang trống, chưa có gì để xuất');
+    return;
+  }
+  const subEl = document.getElementById('sync-export-sub');
+  const originalSub = subEl.textContent;
+  subEl.textContent = `Đang chuẩn bị... (0/${songs.length})`;
+
+  const songsData = [];
+  for (let i = 0; i < songs.length; i++) {
+    const s = songs[i];
+    const data = await blobToDataURL(s.blob);
+    songsData.push({ id: s.id, name: s.name, type: s.type, size: s.size, duration: s.duration, addedAt: s.addedAt, data });
+    subEl.textContent = `Đang chuẩn bị... (${i + 1}/${songs.length})`;
+  }
+
+  const payload = { version: 1, exportedAt: Date.now(), songs: songsData, playlists };
+  const json = JSON.stringify(payload);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `nhac-cua-toi-${dateStr}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+
+  subEl.textContent = originalSub;
+  showToast('Đã xuất xong file thư viện');
+}
+
+async function importLibraryFromFile(file) {
+  showToast('Đang đọc file...');
+  let payload;
+  try {
+    const text = await file.text();
+    payload = JSON.parse(text);
+  } catch (err) {
+    showToast('File không hợp lệ, không đọc được');
+    return;
+  }
+
+  const idMap = {};
+  let added = 0, skipped = 0;
+
+  for (const s of (payload.songs || [])) {
+    const dup = songs.find(existing => existing.name === s.name && existing.size === s.size);
+    if (dup) { idMap[s.id] = dup.id; skipped++; continue; }
+    const blob = dataURLtoBlob(s.data);
+    const newSong = { name: s.name, type: s.type, size: s.size, blob, duration: s.duration, addedAt: s.addedAt || Date.now() };
+    const newId = await addSong(newSong);
+    newSong.id = newId;
+    songs.push(newSong);
+    idMap[s.id] = newId;
+    added++;
+  }
+
+  for (const p of (payload.playlists || [])) {
+    const mappedIds = (p.songIds || []).map(oldId => idMap[oldId]).filter(id => id != null);
+    const existingPl = playlists.find(pl => pl.name === p.name);
+    if (existingPl) {
+      existingPl.songIds = Array.from(new Set([...existingPl.songIds, ...mappedIds]));
+      await putPlaylist(existingPl);
+    } else {
+      const newPl = { name: p.name, songIds: mappedIds, createdAt: p.createdAt || Date.now() };
+      const newId = await addPlaylist(newPl);
+      newPl.id = newId;
+      playlists.push(newPl);
+    }
+  }
+
+  songs.sort((a, b) => b.addedAt - a.addedAt);
+  renderLibrary();
+  renderPlaylists();
+  showToast(`Đã nhập ${added} bài mới (bỏ qua ${skipped} bài trùng)`);
+}
+
+document.getElementById('export-btn').addEventListener('click', exportLibrary);
+document.getElementById('import-btn').addEventListener('click', () => {
+  document.getElementById('import-file-input').click();
+});
+document.getElementById('import-file-input').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (file) await importLibraryFromFile(file);
 });
 
 /* ---------------------------------------------------------
