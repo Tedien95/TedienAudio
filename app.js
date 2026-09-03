@@ -581,7 +581,6 @@ async function exportLibrary() {
   }
   const subEl = document.getElementById('sync-export-sub');
   const originalSub = subEl.textContent;
-  subEl.textContent = 'Đang chuẩn bị file...';
 
   // Manifest holds metadata only (no audio bytes) — audio blobs are appended
   // to the file directly afterwards, in the same order, with no re-encoding.
@@ -597,20 +596,54 @@ async function exportLibrary() {
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   const lenPrefix = new Uint8Array(4);
   new DataView(lenPrefix.buffer).setUint32(0, manifestBytes.byteLength, true);
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const fileName = `nhac-cua-toi-${dateStr}.nhacbak`;
 
+  if (window.showSaveFilePicker) {
+    // Best path: write straight to disk, one song at a time. The whole
+    // library is never held in memory at once, so this is safe for any size.
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: fileName,
+        types: [{ description: 'Sao lưu thư viện nhạc', accept: { 'application/octet-stream': ['.nhacbak'] } }]
+      });
+      const writable = await handle.createWritable();
+      await writable.write(lenPrefix);
+      await writable.write(manifestBytes);
+      for (let i = 0; i < songs.length; i++) {
+        subEl.textContent = `Đang ghi... (${i + 1}/${songs.length})`;
+        await writable.write(songs[i].blob);
+      }
+      await writable.close();
+      subEl.textContent = originalSub;
+      showToast('Đã xuất xong file thư viện');
+    } catch (err) {
+      subEl.textContent = originalSub;
+      if (err && err.name === 'AbortError') return; // user closed the save dialog
+      showToast('Xuất file thất bại, thử lại nhé');
+    }
+    return;
+  }
+
+  // Fallback for browsers without the File System Access API (e.g. most
+  // mobile browsers). Fine for smaller libraries; very large ones may still
+  // use noticeable memory since everything has to be joined before download.
+  const totalBytes = songs.reduce((sum, s) => sum + s.blob.size, 0);
+  if (totalBytes > 300 * 1024 * 1024) {
+    const ok = confirm('Thư viện khá lớn và trình duyệt này không hỗ trợ ghi file trực tiếp, có thể tốn nhiều bộ nhớ. Vẫn muốn tiếp tục?');
+    if (!ok) return;
+  }
+  subEl.textContent = 'Đang chuẩn bị file...';
   const parts = [lenPrefix, manifestBytes, ...songs.map(s => s.blob)];
   const blob = new Blob(parts, { type: 'application/octet-stream' });
-
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const dateStr = new Date().toISOString().slice(0, 10);
   a.href = url;
-  a.download = `nhac-cua-toi-${dateStr}.nhacbak`;
+  a.download = fileName;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-
   subEl.textContent = originalSub;
   showToast('Đã xuất xong file thư viện');
 }
