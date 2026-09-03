@@ -441,10 +441,14 @@ button {
   position: fixed;
   inset: 0;
   background: rgba(10, 8, 5, 0.6);
-  display: flex;
+  display: none;
   align-items: flex-end;
   justify-content: center;
   z-index: 20;
+}
+
+.modal-backdrop:not([hidden]) {
+  display: flex;
 }
 
 .modal {
