@@ -1,4 +1,4 @@
-const CACHE_NAME = 'music-player-shell-v1';
+const CACHE_NAME = 'music-player-shell-v2';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -25,17 +25,14 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// App-shell files: cache first, so the app opens instantly offline.
-// Everything else (e.g. Google Fonts) : network first, falling back to cache.
+// Our own app files: network first, so any code update shows up the next
+// time you're online. Falls back to the cached copy only when offline.
+// Third-party assets (e.g. Google Fonts) rarely change, so cache first there.
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  const isShellFile = url.origin === location.origin;
+  const isOwnFile = url.origin === location.origin;
 
-  if (isShellFile) {
-    event.respondWith(
-      caches.match(event.request).then((cached) => cached || fetch(event.request))
-    );
-  } else {
+  if (isOwnFile) {
     event.respondWith(
       fetch(event.request)
         .then((res) => {
@@ -44,6 +41,14 @@ self.addEventListener('fetch', (event) => {
           return res;
         })
         .catch(() => caches.match(event.request))
+    );
+  } else {
+    event.respondWith(
+      caches.match(event.request).then((cached) => cached || fetch(event.request).then((res) => {
+        const clone = res.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        return res;
+      }))
     );
   }
 });
