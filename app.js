@@ -71,7 +71,7 @@ let queue = [];          // array of song ids currently playing through
 let queueIndex = -1;
 let currentObjectUrl = null;
 let isPlaying = false;
-let repeatOn = false;
+let repeatMode = 'off'; // 'off' | 'all' | 'one'
 let shuffleOn = false;
 let activePlaylistId = null; // which playlist detail view is open
 let pickerTargetPlaylistId = null;
@@ -527,7 +527,7 @@ function goNext(userTriggered) {
   } else {
     queueIndex++;
     if (queueIndex >= queue.length) {
-      if (repeatOn) queueIndex = 0;
+      if (repeatMode === 'all') queueIndex = 0;
       else { stopPlayback(); return; }
     }
   }
@@ -537,7 +537,7 @@ function goNext(userTriggered) {
 function goPrev() {
   if (!queue.length) return;
   queueIndex--;
-  if (queueIndex < 0) queueIndex = repeatOn ? queue.length - 1 : 0;
+  if (queueIndex < 0) queueIndex = repeatMode === 'all' ? queue.length - 1 : 0;
   playCurrent();
 }
 
@@ -547,13 +547,31 @@ document.getElementById('btn-shuffle').addEventListener('click', (e) => {
   showToast(shuffleOn ? 'Đã bật phát ngẫu nhiên' : 'Đã tắt phát ngẫu nhiên');
 });
 
-document.getElementById('btn-repeat').addEventListener('click', (e) => {
-  repeatOn = !repeatOn;
-  e.currentTarget.classList.toggle('active', repeatOn);
-  showToast(repeatOn ? 'Đã bật lặp lại' : 'Đã tắt lặp lại');
+const repeatBtnEl = document.getElementById('btn-repeat');
+const repeatBadgeEl = document.getElementById('repeat-one-badge');
+
+function updateRepeatButton() {
+  repeatBtnEl.classList.toggle('active', repeatMode !== 'off');
+  repeatBadgeEl.classList.toggle('show', repeatMode === 'one');
+}
+
+repeatBtnEl.addEventListener('click', () => {
+  repeatMode = repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off';
+  updateRepeatButton();
+  const msg = repeatMode === 'all' ? 'Đã bật lặp lại tất cả'
+    : repeatMode === 'one' ? 'Đã bật lặp lại 1 bài'
+    : 'Đã tắt lặp lại';
+  showToast(msg);
 });
 
-audioEl.addEventListener('ended', () => goNext(false));
+audioEl.addEventListener('ended', () => {
+  if (repeatMode === 'one') {
+    audioEl.currentTime = 0;
+    audioEl.play();
+    return;
+  }
+  goNext(false);
+});
 
 audioEl.addEventListener('timeupdate', () => {
   if (!isScrubbing) {
