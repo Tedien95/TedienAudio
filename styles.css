@@ -219,6 +219,7 @@ button {
 }
 
 .t-btn {
+  position: relative;
   color: var(--text);
   padding: 8px;
   border-radius: 50%;
@@ -228,6 +229,26 @@ button {
 }
 
 .t-btn:hover { color: var(--accent-soft); }
+
+.repeat-one-badge {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.repeat-one-badge.show { display: flex; }
 
 .t-btn--main {
   background: var(--accent);
