@@ -154,6 +154,9 @@ document.getElementById('file-input').addEventListener('change', async (e) => {
    Rendering: Library
    --------------------------------------------------------- */
 
+let selectMode = false;
+let librarySelection = new Set();
+
 function renderLibrary() {
   const list = document.getElementById('library-list');
   const empty = document.getElementById('library-empty');
@@ -163,17 +166,76 @@ function renderLibrary() {
 
   if (!songs.length) {
     empty.classList.add('show');
+    updateSelectBar();
     return;
   }
   empty.classList.remove('show');
 
   songs.forEach((song, i) => {
-    list.appendChild(buildTrackRow(song, i + 1, {
-      onPlay: () => playFromList(songs.map(s => s.id), song.id),
-      onMenu: () => openTrackMenu(song)
-    }));
+    if (selectMode) {
+      list.appendChild(buildTrackRow(song, i + 1, {
+        picking: true,
+        checked: librarySelection.has(song.id),
+        onToggle: () => {
+          if (librarySelection.has(song.id)) librarySelection.delete(song.id);
+          else librarySelection.add(song.id);
+          renderLibrary();
+        }
+      }));
+    } else {
+      list.appendChild(buildTrackRow(song, i + 1, {
+        onPlay: () => playFromList(songs.map(s => s.id), song.id),
+        onMenu: () => openTrackMenu(song)
+      }));
+    }
   });
+  updateSelectBar();
 }
+
+function updateSelectBar() {
+  const bar = document.getElementById('select-bar');
+  bar.hidden = !selectMode;
+  document.getElementById('delete-selected-btn').textContent = `Xóa (${librarySelection.size})`;
+  document.getElementById('select-all-btn').textContent =
+    (songs.length > 0 && librarySelection.size === songs.length) ? 'Bỏ chọn tất cả' : 'Chọn tất cả';
+}
+
+document.getElementById('select-mode-btn').addEventListener('click', () => {
+  selectMode = true;
+  librarySelection.clear();
+  renderLibrary();
+});
+
+document.getElementById('cancel-select-btn').addEventListener('click', () => {
+  selectMode = false;
+  librarySelection.clear();
+  renderLibrary();
+});
+
+document.getElementById('select-all-btn').addEventListener('click', () => {
+  if (librarySelection.size === songs.length) {
+    librarySelection.clear();
+  } else {
+    songs.forEach(s => librarySelection.add(s.id));
+  }
+  renderLibrary();
+});
+
+document.getElementById('delete-selected-btn').addEventListener('click', async () => {
+  const count = librarySelection.size;
+  if (!count) { showToast('Chưa chọn bài nào'); return; }
+  if (!confirm(`Xóa ${count} bài đã chọn khỏi thư viện? (Sẽ gỡ khỏi mọi playlist)`)) return;
+
+  for (const id of Array.from(librarySelection)) {
+    await deleteSongEverywhere(id, { silent: true });
+  }
+  librarySelection.clear();
+  selectMode = false;
+  renderLibrary();
+  renderPlaylists();
+  if (activePlaylistId != null) renderPlaylistDetail(activePlaylistId);
+  showToast(`Đã xóa ${count} bài`);
+});
 
 function buildTrackRow(song, index, { onPlay, onMenu, picking, checked, onToggle }) {
   const li = document.createElement('li');
@@ -232,7 +294,7 @@ function openTrackMenu(song) {
   if (choice) deleteSongEverywhere(song.id);
 }
 
-async function deleteSongEverywhere(songId) {
+async function deleteSongEverywhere(songId, options = {}) {
   await deleteSongRecord(songId);
   songs = songs.filter(s => s.id !== songId);
   for (const p of playlists) {
@@ -242,10 +304,12 @@ async function deleteSongEverywhere(songId) {
     }
   }
   if (currentSongId() === songId) stopPlayback();
-  renderLibrary();
-  renderPlaylists();
-  if (activePlaylistId != null) renderPlaylistDetail(activePlaylistId);
-  showToast('Đã xóa bài hát');
+  if (!options.silent) {
+    renderLibrary();
+    renderPlaylists();
+    if (activePlaylistId != null) renderPlaylistDetail(activePlaylistId);
+    showToast('Đã xóa bài hát');
+  }
 }
 
 /* ---------------------------------------------------------
