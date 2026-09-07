@@ -586,6 +586,35 @@ function updatePlayButton() {
   }
 }
 
+async function resumePlayback() {
+  const id = currentSongId();
+  if (id == null) return;
+  const savedTime = audioEl.currentTime;
+
+  // On iOS, locking the screen for a while can make the app's in-memory
+  // audio source go stale even though the app is still "running" — the
+  // lock-screen timeline keeps moving but there's no real sound left.
+  // Detect that and rebuild the source fresh from the stored song blob.
+  const looksBroken = !audioEl.src || audioEl.error || audioEl.readyState === 0;
+  if (looksBroken) {
+    const song = songs.find(s => s.id === id) || await getSong(id);
+    if (song) {
+      if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+      currentObjectUrl = URL.createObjectURL(song.blob);
+      audioEl.src = currentObjectUrl;
+      await new Promise((resolve) => {
+        audioEl.addEventListener('loadedmetadata', resolve, { once: true });
+      });
+      if (savedTime > 0) audioEl.currentTime = savedTime;
+    }
+  }
+
+  audioEl.play().then(() => {
+    isPlaying = true;
+    updatePlayButton();
+  }).catch(() => {});
+}
+
 document.getElementById('btn-play').addEventListener('click', () => {
   if (currentSongId() == null) {
     if (songs.length) playFromList(songs.map(s => s.id), songs[0].id);
@@ -594,11 +623,10 @@ document.getElementById('btn-play').addEventListener('click', () => {
   if (isPlaying) {
     audioEl.pause();
     isPlaying = false;
+    updatePlayButton();
   } else {
-    audioEl.play();
-    isPlaying = true;
+    resumePlayback();
   }
-  updatePlayButton();
 });
 
 document.getElementById('btn-next').addEventListener('click', () => goNext(true));
@@ -694,19 +722,29 @@ scrubberEl.addEventListener('change', () => {
 });
 
 if ('mediaSession' in navigator) {
-  navigator.mediaSession.setActionHandler('play', () => {
-    audioEl.play();
-    isPlaying = true;
-    updatePlayButton();
-  });
-  navigator.mediaSession.setActionHandler('pause', () => {
+  const safeSetHandler = (action, handler) => {
+    try {
+      navigator.mediaSession.setActionHandler(action, handler);
+    } catch (e) {
+      // Some actions aren't supported on every browser/OS version — skip
+      // that one without breaking the rest.
+    }
+  };
+  safeSetHandler('play', () => resumePlayback());
+  safeSetHandler('pause', () => {
     audioEl.pause();
     isPlaying = false;
     updatePlayButton();
   });
-  navigator.mediaSession.setActionHandler('previoustrack', () => goPrev());
-  navigator.mediaSession.setActionHandler('nexttrack', () => goNext(true));
-  navigator.mediaSession.setActionHandler('seekto', (details) => {
+  safeSetHandler('previoustrack', () => goPrev());
+  safeSetHandler('nexttrack', () => goNext(true));
+  // iOS always shows a "10s skip" icon on the lock screen no matter which
+  // handlers are registered — it won't switch to prev/next icons. Binding
+  // seekbackward/seekforward to the same track-change logic means tapping
+  // that "10s" button still does the useful thing: changes track.
+  safeSetHandler('seekbackward', () => goPrev());
+  safeSetHandler('seekforward', () => goNext(true));
+  safeSetHandler('seekto', (details) => {
     if (details.seekTime != null) audioEl.currentTime = details.seekTime;
   });
 }
