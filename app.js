@@ -459,6 +459,8 @@ function playFromList(idList, startId) {
   playCurrent();
 }
 
+let currentKnownDuration = 0; // trusted duration measured once at upload time
+
 async function playCurrent() {
   const id = currentSongId();
   if (id == null) return;
@@ -468,6 +470,7 @@ async function playCurrent() {
   if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
   currentObjectUrl = URL.createObjectURL(song.blob);
   audioEl.src = currentObjectUrl;
+  currentKnownDuration = song.duration || 0;
   audioEl.play().then(() => {
     isPlaying = true;
     updatePlayButton();
@@ -478,6 +481,18 @@ async function playCurrent() {
   document.getElementById('disc').classList.add('spinning');
   renderLibrary();
   if (activePlaylistId != null) renderPlaylistDetail(activePlaylistId);
+
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: song.name,
+      artist: 'Máy nghe nhạc của tôi',
+      artwork: [
+        { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }
+      ]
+    });
+    navigator.mediaSession.playbackState = 'playing';
+  }
 }
 
 function stopPlayback() {
@@ -487,16 +502,24 @@ function stopPlayback() {
   queue = [];
   queueIndex = -1;
   isPlaying = false;
+  currentKnownDuration = 0;
   updatePlayButton();
   document.getElementById('np-title').textContent = 'Chưa chọn bài nào';
   document.getElementById('np-sub').textContent = 'Thêm nhạc để bắt đầu';
   document.getElementById('disc').classList.remove('spinning');
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = null;
+    navigator.mediaSession.playbackState = 'none';
+  }
 }
 
 function updatePlayButton() {
   document.getElementById('icon-play').hidden = isPlaying;
   document.getElementById('icon-pause').hidden = !isPlaying;
   document.getElementById('disc').classList.toggle('spinning', isPlaying);
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+  }
 }
 
 document.getElementById('btn-play').addEventListener('click', () => {
@@ -574,23 +597,55 @@ audioEl.addEventListener('ended', () => {
 });
 
 audioEl.addEventListener('timeupdate', () => {
+  // audioEl.duration can be wildly wrong on WebKit for certain VBR mp3s, so
+  // prefer the duration we measured once at upload time when we have it.
+  const totalDuration = currentKnownDuration > 0 ? currentKnownDuration : audioEl.duration;
   if (!isScrubbing) {
-    const pct = audioEl.duration ? (audioEl.currentTime / audioEl.duration) * 100 : 0;
+    const pct = totalDuration ? (audioEl.currentTime / totalDuration) * 100 : 0;
     document.getElementById('scrubber').value = pct;
   }
   document.getElementById('time-current').textContent = formatTime(audioEl.currentTime);
-  document.getElementById('time-total').textContent = formatTime(audioEl.duration || 0);
+  document.getElementById('time-total').textContent = formatTime(totalDuration || 0);
+
+  if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession && totalDuration > 0 && isFinite(totalDuration)) {
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: totalDuration,
+        playbackRate: audioEl.playbackRate || 1,
+        position: Math.min(audioEl.currentTime, totalDuration)
+      });
+    } catch (e) { /* ignore transient state errors */ }
+  }
 });
 
 let isScrubbing = false;
 const scrubberEl = document.getElementById('scrubber');
 scrubberEl.addEventListener('input', () => { isScrubbing = true; });
 scrubberEl.addEventListener('change', () => {
-  if (audioEl.duration) {
-    audioEl.currentTime = (scrubberEl.value / 100) * audioEl.duration;
+  const totalDuration = currentKnownDuration > 0 ? currentKnownDuration : audioEl.duration;
+  if (totalDuration) {
+    audioEl.currentTime = (scrubberEl.value / 100) * totalDuration;
   }
   isScrubbing = false;
 });
+
+if ('mediaSession' in navigator) {
+  navigator.mediaSession.setActionHandler('play', () => {
+    audioEl.play();
+    isPlaying = true;
+    updatePlayButton();
+  });
+  navigator.mediaSession.setActionHandler('pause', () => {
+    audioEl.pause();
+    isPlaying = false;
+    updatePlayButton();
+  });
+  navigator.mediaSession.setActionHandler('previoustrack', () => goPrev());
+  navigator.mediaSession.setActionHandler('nexttrack', () => goNext(true));
+  navigator.mediaSession.setActionHandler('seekto', (details) => {
+    if (details.seekTime != null) audioEl.currentTime = details.seekTime;
+  });
+}
 
 /* ---------------------------------------------------------
    Sync: export / import library as a single file
@@ -684,6 +739,8 @@ function exportPlaylist(playlistId) {
 
 async function importLibraryFromFile(file) {
   showToast('Đang đọc file...');
+  const subEl = document.getElementById('sync-import-sub');
+  const originalSub = subEl ? subEl.textContent : null;
   try {
     const lenBuf = await file.slice(0, 4).arrayBuffer();
     const manifestLen = new DataView(lenBuf).getUint32(0, true);
@@ -693,17 +750,28 @@ async function importLibraryFromFile(file) {
     let offset = 4 + manifestLen;
     const idMap = {};
     let added = 0, skipped = 0;
+    const totalSongs = (manifest.songs || []).length;
+    let i = 0;
 
     for (const s of (manifest.songs || [])) {
-      // Slice the audio bytes straight out of the uploaded file — this is a
-      // cheap reference, not a full read into memory.
-      const songBlob = file.slice(offset, offset + s.size, s.type);
+      i++;
+      if (subEl) subEl.textContent = `Đang nhập... (${i}/${totalSongs})`;
+
+      const rawSlice = file.slice(offset, offset + s.size, s.type);
       offset += s.size;
 
       const dup = songs.find(existing => existing.name === s.name && existing.size === s.size);
       if (dup) { idMap[s.id] = dup.id; skipped++; continue; }
 
-      const newSong = { name: s.name, type: s.type, size: s.size, blob: songBlob, duration: s.duration, addedAt: s.addedAt || Date.now() };
+      // Read the slice's bytes out and rebuild it as a brand-new, standalone
+      // Blob before storing it. Some mobile browsers (notably iOS Safari)
+      // don't reliably keep slice() boundaries once a Blob round-trips
+      // through IndexedDB — the "sliced" blob can read back as the entire
+      // original file. Materializing it here avoids that.
+      const arrayBuffer = await rawSlice.arrayBuffer();
+      const blob = new Blob([arrayBuffer], { type: s.type });
+
+      const newSong = { name: s.name, type: s.type, size: s.size, blob, duration: s.duration, addedAt: s.addedAt || Date.now() };
       const newId = await addSong(newSong);
       newSong.id = newId;
       songs.push(newSong);
@@ -728,6 +796,7 @@ async function importLibraryFromFile(file) {
     songs.sort((a, b) => b.addedAt - a.addedAt);
     renderLibrary();
     renderPlaylists();
+    if (subEl) subEl.textContent = originalSub;
     showToast(`Đã nhập ${added} bài mới (bỏ qua ${skipped} bài trùng)`);
   } catch (err) {
     showToast('File không hợp lệ, không đọc được');
