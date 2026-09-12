@@ -920,6 +920,46 @@ document.getElementById('import-file-input').addEventListener('change', async (e
    Init
    --------------------------------------------------------- */
 
+/* ---------------------------------------------------------
+   Volume control (desktop / Android — iOS ignores audio.volume
+   by design and only allows hardware/Control Center volume there)
+   --------------------------------------------------------- */
+
+const VOLUME_STORAGE_KEY = 'musicPlayerVolume';
+let lastNonZeroVolume = 1;
+
+function applyVolume(vol) {
+  vol = Math.min(1, Math.max(0, vol));
+  audioEl.volume = vol;
+  document.getElementById('volume-slider').value = Math.round(vol * 100);
+  document.getElementById('icon-vol-on').hidden = vol === 0;
+  document.getElementById('icon-vol-off').hidden = vol !== 0;
+  if (vol > 0) lastNonZeroVolume = vol;
+  try { localStorage.setItem(VOLUME_STORAGE_KEY, String(vol)); } catch (e) { /* ignore */ }
+}
+
+document.getElementById('volume-slider').addEventListener('input', (e) => {
+  applyVolume(Number(e.target.value) / 100);
+});
+
+document.getElementById('btn-mute').addEventListener('click', () => {
+  if (audioEl.volume > 0) {
+    applyVolume(0);
+  } else {
+    applyVolume(lastNonZeroVolume || 1);
+  }
+});
+
+function restoreVolume() {
+  let stored = 1;
+  try {
+    const raw = localStorage.getItem(VOLUME_STORAGE_KEY);
+    if (raw != null) stored = parseFloat(raw);
+  } catch (e) { /* ignore */ }
+  if (isNaN(stored)) stored = 1;
+  applyVolume(stored);
+}
+
 async function init() {
   db = await openDB();
   songs = await getAllSongs();
@@ -927,6 +967,7 @@ async function init() {
   playlists = await getAllPlaylists();
   renderLibrary();
   renderPlaylists();
+  restoreVolume();
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
