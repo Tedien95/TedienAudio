@@ -63,6 +63,14 @@
             <span class="repeat-one-badge" id="repeat-one-badge">1</span>
           </button>
         </div>
+
+        <div class="volume-row">
+          <button class="icon-btn icon-btn--ghost volume-icon-btn" id="btn-mute" title="Tắt/bật tiếng" aria-label="Tắt/bật tiếng">
+            <svg id="icon-vol-on" viewBox="0 0 24 24" width="17" height="17"><path d="M4 9v6h4l5 4V5L8 9H4Z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round"/></svg>
+            <svg id="icon-vol-off" viewBox="0 0 24 24" width="17" height="17" hidden><path d="M4 9v6h4l5 4V5L8 9H4Z" fill="currentColor"/><path d="M16 9l4 6m0-6-4 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </button>
+          <input type="range" id="volume-slider" class="scrubber volume-slider" min="0" max="100" value="100" step="1">
+        </div>
       </div>
     </div>
   </header>
