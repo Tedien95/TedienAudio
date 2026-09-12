@@ -261,6 +261,26 @@ button {
 
 .t-btn.active { color: var(--accent); }
 
+.volume-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 0 6px;
+}
+
+.volume-icon-btn {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  padding: 4px;
+  border: none;
+}
+
+.volume-slider {
+  flex: 1;
+  max-width: 160px;
+}
+
 /* ---------- Tabs ---------- */
 
 .tabs {
