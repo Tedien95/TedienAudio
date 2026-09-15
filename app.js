@@ -586,33 +586,39 @@ function updatePlayButton() {
   }
 }
 
-async function resumePlayback() {
+function resumePlayback() {
   const id = currentSongId();
   if (id == null) return;
-  const savedTime = audioEl.currentTime;
 
-  // On iOS, locking the screen for a while can make the app's in-memory
-  // audio source go stale even though the app is still "running" — the
-  // lock-screen timeline keeps moving but there's no real sound left.
-  // Detect that and rebuild the source fresh from the stored song blob.
-  const looksBroken = !audioEl.src || audioEl.error || audioEl.readyState === 0;
-  if (looksBroken) {
-    const song = songs.find(s => s.id === id) || await getSong(id);
-    if (song) {
-      if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
-      currentObjectUrl = URL.createObjectURL(song.blob);
-      audioEl.src = currentObjectUrl;
-      await new Promise((resolve) => {
-        audioEl.addEventListener('loadedmetadata', resolve, { once: true });
-      });
-      if (savedTime > 0) audioEl.currentTime = savedTime;
-    }
+  // iOS only honours a play() call made immediately inside the user's tap.
+  // Any await first (reading the song back from storage, waiting for
+  // metadata) makes the tap "expire" and the call is blocked silently.
+  // After the screen sleeps, iOS can also throw away the audio source, so we
+  // check for that and rebuild it here — synchronously, from the song blob
+  // we already hold in memory — before asking it to play.
+  const song = songs.find(s => s.id === id);
+  const sourceIsDead = !audioEl.src || audioEl.error || audioEl.readyState === 0;
+
+  if (sourceIsDead && song) {
+    const savedTime = audioEl.currentTime;
+    if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+    currentObjectUrl = URL.createObjectURL(song.blob);
+    audioEl.src = currentObjectUrl;
+    audioEl.addEventListener('loadedmetadata', () => {
+      if (savedTime > 0 && savedTime < (song.duration || Infinity)) {
+        audioEl.currentTime = savedTime;
+      }
+    }, { once: true });
   }
 
   audioEl.play().then(() => {
     isPlaying = true;
     updatePlayButton();
-  }).catch(() => {});
+  }).catch(() => {
+    isPlaying = false;
+    updatePlayButton();
+    showToast('Không phát được, thử mở app rồi bấm phát lại');
+  });
 }
 
 document.getElementById('btn-play').addEventListener('click', () => {
