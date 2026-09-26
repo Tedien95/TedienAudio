@@ -44,6 +44,9 @@ function getAllSongs() {
 function getSong(id) {
   return reqToPromise(tx('songs', 'readonly').get(id));
 }
+function putSong(song) {
+  return reqToPromise(tx('songs', 'readwrite').put(song));
+}
 function deleteSongRecord(id) {
   return reqToPromise(tx('songs', 'readwrite').delete(id));
 }
@@ -545,6 +548,7 @@ async function playCurrent() {
   document.getElementById('disc').classList.add('spinning');
   renderLibrary();
   if (activePlaylistId != null) renderPlaylistDetail(activePlaylistId);
+  loadLyricsForCurrentSong();
 
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -575,6 +579,9 @@ function stopPlayback() {
     navigator.mediaSession.metadata = null;
     navigator.mediaSession.playbackState = 'none';
   }
+  currentLyrics = null;
+  activeLyricIndex = -1;
+  if (lyricsPanelOpen) renderLyricsPanel();
 }
 
 function updatePlayButton() {
@@ -714,6 +721,8 @@ audioEl.addEventListener('timeupdate', () => {
       });
     } catch (e) { /* ignore transient state errors */ }
   }
+
+  updateActiveLyricLine();
 });
 
 let isScrubbing = false;
@@ -923,8 +932,193 @@ document.getElementById('import-file-input').addEventListener('change', async (e
 });
 
 /* ---------------------------------------------------------
-   Init
+   Lyrics (user-supplied text; LRC timestamps sync automatically)
    --------------------------------------------------------- */
+
+let currentLyrics = null; // { hasTimestamps, lines: [{time, text}] }
+let activeLyricIndex = -1;
+let lyricsPanelOpen = false;
+
+function parseLRC(text) {
+  const rawLines = (text || '').split(/\r?\n/);
+  const timeTag = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
+  const lines = [];
+  let hasTimestamps = false;
+
+  for (const raw of rawLines) {
+    const matches = [...raw.matchAll(timeTag)];
+    const content = raw.replace(timeTag, '').trim();
+    if (matches.length) {
+      hasTimestamps = true;
+      for (const m of matches) {
+        const min = parseInt(m[1], 10);
+        const sec = parseInt(m[2], 10);
+        const msRaw = m[3] ? m[3].padEnd(3, '0') : '0';
+        const ms = parseInt(msRaw, 10);
+        if (content) lines.push({ time: min * 60 + sec + ms / 1000, text: content });
+      }
+    } else if (content) {
+      lines.push({ time: null, text: content });
+    }
+  }
+  if (hasTimestamps) lines.sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+  return { hasTimestamps, lines };
+}
+
+function loadLyricsForCurrentSong() {
+  const id = currentSongId();
+  const song = id != null ? songs.find(s => s.id === id) : null;
+  currentLyrics = (song && song.lyrics) ? parseLRC(song.lyrics) : null;
+  activeLyricIndex = -1;
+  renderLyricsPanel();
+}
+
+function renderLyricsPanel() {
+  const list = document.getElementById('lyrics-lines');
+  const emptyMsg = document.getElementById('lyrics-empty-msg');
+  list.innerHTML = '';
+  activeLyricIndex = -1;
+
+  if (!currentLyrics || !currentLyrics.lines.length) {
+    emptyMsg.classList.add('show');
+    return;
+  }
+  emptyMsg.classList.remove('show');
+  currentLyrics.lines.forEach((line) => {
+    const p = document.createElement('p');
+    p.className = 'lyric-line';
+    p.textContent = line.text;
+    list.appendChild(p);
+  });
+}
+
+function updateActiveLyricLine() {
+  if (!lyricsPanelOpen || !currentLyrics || !currentLyrics.hasTimestamps) return;
+  const t = audioEl.currentTime;
+  let idx = -1;
+  for (let i = 0; i < currentLyrics.lines.length; i++) {
+    if (currentLyrics.lines[i].time <= t) idx = i;
+    else break;
+  }
+  if (idx === activeLyricIndex) return;
+  activeLyricIndex = idx;
+
+  const list = document.getElementById('lyrics-lines');
+  const prev = list.querySelector('.lyric-line.active');
+  if (prev) prev.classList.remove('active');
+  const cur = idx >= 0 ? list.children[idx] : null;
+  if (cur) {
+    cur.classList.add('active');
+    cur.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+document.getElementById('lyrics-toggle-btn').addEventListener('click', () => {
+  lyricsPanelOpen = !lyricsPanelOpen;
+  document.getElementById('lyrics-panel').hidden = !lyricsPanelOpen;
+  document.getElementById('lyrics-toggle-btn').classList.toggle('active', lyricsPanelOpen);
+  if (lyricsPanelOpen) renderLyricsPanel();
+});
+
+document.getElementById('edit-lyrics-btn').addEventListener('click', () => {
+  const id = currentSongId();
+  if (id == null) { showToast('Chưa phát bài nào'); return; }
+  const song = songs.find(s => s.id === id);
+  document.getElementById('lyrics-textarea').value = (song && song.lyrics) || '';
+  document.getElementById('lyrics-results').innerHTML = '';
+  document.getElementById('lyrics-backdrop').hidden = false;
+});
+
+document.getElementById('lyrics-modal-close').addEventListener('click', () => {
+  document.getElementById('lyrics-backdrop').hidden = true;
+});
+
+function guessSearchQueryFromSongName(name) {
+  // Song file names often look like "05. Baby (feat. marzuz)_01" — strip the
+  // leading track number and trailing "_NN" suffix to get a cleaner query.
+  return name
+    .replace(/^\s*\d+[\.\-\)]\s*/, '')
+    .replace(/_\d+\s*$/, '')
+    .replace(/[_]+/g, ' ')
+    .trim();
+}
+
+document.getElementById('lyrics-search-btn').addEventListener('click', async () => {
+  const id = currentSongId();
+  if (id == null) return;
+  const song = songs.find(s => s.id === id);
+  if (!song) return;
+
+  const query = guessSearchQueryFromSongName(song.name);
+  const resultsEl = document.getElementById('lyrics-results');
+  resultsEl.innerHTML = '<li class="lyrics-result-status">Đang tìm...</li>';
+
+  let data;
+  try {
+    const res = await fetch('https://lrclib.net/api/search?q=' + encodeURIComponent(query));
+    if (!res.ok) throw new Error('bad response');
+    data = await res.json();
+  } catch (err) {
+    resultsEl.innerHTML = '<li class="lyrics-result-status">Không tìm được (cần có mạng, hoặc dịch vụ đang lỗi). Thử sửa tên bài rồi tìm lại, hoặc dán lời thủ công.</li>';
+    return;
+  }
+
+  if (!Array.isArray(data) || !data.length) {
+    resultsEl.innerHTML = '<li class="lyrics-result-status">Không tìm thấy kết quả cho "' + escapeHtml(query) + '". Thử đổi tên tìm kiếm hoặc dán lời thủ công.</li>';
+    return;
+  }
+
+  resultsEl.innerHTML = '';
+  data.slice(0, 8).forEach((item) => {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.className = 'lyrics-result-btn';
+    const title = document.createElement('span');
+    title.className = 'lyrics-result-title';
+    title.textContent = item.trackName || item.name || query;
+    const sub = document.createElement('span');
+    sub.className = 'lyrics-result-sub';
+    const kind = item.syncedLyrics ? 'có mốc thời gian' : (item.plainLyrics ? 'lời thường' : 'không có lời');
+    sub.textContent = `${item.artistName || 'Không rõ ca sĩ'} · ${formatTime(item.duration || 0)} · ${kind}`;
+    btn.appendChild(title);
+    btn.appendChild(sub);
+    btn.addEventListener('click', () => {
+      const text = item.syncedLyrics || item.plainLyrics || '';
+      if (!text) { showToast('Bài này chưa có lời trên lrclib'); return; }
+      document.getElementById('lyrics-textarea').value = text;
+      resultsEl.innerHTML = '';
+      showToast('Đã điền lời — nhấn Lưu để áp dụng');
+    });
+    li.appendChild(btn);
+    resultsEl.appendChild(li);
+  });
+});
+
+document.getElementById('lyrics-save-btn').addEventListener('click', async () => {
+  const id = currentSongId();
+  if (id == null) return;
+  const song = songs.find(s => s.id === id);
+  if (!song) return;
+  const text = document.getElementById('lyrics-textarea').value;
+  song.lyrics = text.trim() ? text : null;
+  await putSong(song);
+  document.getElementById('lyrics-backdrop').hidden = true;
+  loadLyricsForCurrentSong();
+  showToast('Đã lưu lời bài hát');
+});
+
+document.getElementById('lyrics-clear-btn').addEventListener('click', async () => {
+  const id = currentSongId();
+  if (id == null) return;
+  const song = songs.find(s => s.id === id);
+  if (!song) return;
+  song.lyrics = null;
+  await putSong(song);
+  document.getElementById('lyrics-textarea').value = '';
+  document.getElementById('lyrics-backdrop').hidden = true;
+  loadLyricsForCurrentSong();
+  showToast('Đã xóa lời bài hát');
+});
 
 /* ---------------------------------------------------------
    Volume control (desktop / Android — iOS ignores audio.volume
