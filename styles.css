@@ -88,6 +88,10 @@ button {
   padding: 6px;
 }
 
+.icon-btn--ghost.active {
+  color: var(--accent);
+}
+
 .deck-body {
   display: flex;
   gap: 20px;
@@ -147,6 +151,18 @@ button {
   min-width: 0;
 }
 
+.np-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.np-title-col {
+  min-width: 0;
+  flex: 1;
+}
+
 .np-title {
   margin: 0;
   font-size: 17px;
@@ -163,6 +179,101 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.lyrics-panel {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.lyrics-scroll {
+  max-height: 180px;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+}
+
+.lyric-line {
+  margin: 0;
+  padding: 6px 2px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  transition: color 0.25s ease;
+}
+
+.lyric-line.active {
+  color: var(--accent-soft);
+  font-weight: 600;
+}
+
+.lyrics-empty-msg {
+  display: none;
+  margin: 4px 0 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.lyrics-empty-msg.show { display: block; }
+
+.lyrics-search-row {
+  margin-top: 4px;
+}
+
+.lyrics-results {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.lyrics-results:not(:empty) {
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.lyrics-result-btn {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.lyrics-results li:last-child .lyrics-result-btn {
+  border-bottom: none;
+}
+
+.lyrics-result-title {
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.lyrics-result-sub {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.lyrics-result-status {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.lyrics-textarea {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 160px;
+  margin-top: 10px;
 }
 
 .scrubber-row {
