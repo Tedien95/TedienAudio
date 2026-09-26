@@ -35,8 +35,15 @@
       </div>
 
       <div class="now-playing">
-        <p class="np-title" id="np-title">Chưa chọn bài nào</p>
-        <p class="np-sub" id="np-sub">Thêm nhạc để bắt đầu</p>
+        <div class="np-title-row">
+          <div class="np-title-col">
+            <p class="np-title" id="np-title">Chưa chọn bài nào</p>
+            <p class="np-sub" id="np-sub">Thêm nhạc để bắt đầu</p>
+          </div>
+          <button class="icon-btn icon-btn--ghost" id="lyrics-toggle-btn" title="Lời bài hát" aria-label="Lời bài hát">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M7 8h10M7 12h7M7 16h4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><rect x="3.5" y="4" width="17" height="16" rx="2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+          </button>
+        </div>
 
         <div class="scrubber-row">
           <span class="time mono" id="time-current">0:00</span>
@@ -72,6 +79,12 @@
           <input type="range" id="volume-slider" class="scrubber volume-slider" min="0" max="100" value="100" step="1">
         </div>
       </div>
+    </div>
+
+    <div class="lyrics-panel" id="lyrics-panel" hidden>
+      <div class="lyrics-scroll" id="lyrics-lines"></div>
+      <p class="lyrics-empty-msg" id="lyrics-empty-msg">Chưa có lời cho bài này.</p>
+      <button class="text-btn" id="edit-lyrics-btn">Thêm / sửa lời bài hát</button>
     </div>
   </header>
 
@@ -190,6 +203,28 @@
     <div class="modal-foot modal-foot--split">
       <button class="text-btn text-btn--ghost" id="name-cancel">Hủy</button>
       <button class="text-btn" id="name-confirm">Tạo</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: add/edit lyrics -->
+<div class="modal-backdrop" id="lyrics-backdrop" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Lời bài hát</h3>
+      <button class="icon-btn icon-btn--ghost" id="lyrics-modal-close">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <p class="sync-desc">Dán lời vào đây. Nếu lời có mốc thời gian dạng LRC (ví dụ: [00:12.34] Dòng lời) thì sẽ tự chạy theo nhạc; dán lời thường (không mốc thời gian) thì chỉ hiển thị, không tự cuộn.</p>
+    <div class="lyrics-search-row">
+      <button class="text-btn text-btn--ghost" id="lyrics-search-btn">Tự động tìm lời (cần mạng)</button>
+    </div>
+    <ul class="lyrics-results" id="lyrics-results"></ul>
+    <textarea id="lyrics-textarea" class="text-input lyrics-textarea" rows="10" placeholder="[00:12.34] Dòng lời đầu tiên...&#10;[00:15.80] Dòng lời tiếp theo..."></textarea>
+    <div class="modal-foot modal-foot--split">
+      <button class="text-btn text-btn--ghost" id="lyrics-clear-btn">Xóa lời</button>
+      <button class="text-btn" id="lyrics-save-btn">Lưu</button>
     </div>
   </div>
 </div>
