@@ -218,13 +218,36 @@
     </div>
     <p class="sync-desc">Dán lời vào đây. Nếu lời có mốc thời gian dạng LRC (ví dụ: [00:12.34] Dòng lời) thì sẽ tự chạy theo nhạc; dán lời thường (không mốc thời gian) thì chỉ hiển thị, không tự cuộn.</p>
     <div class="lyrics-search-row">
+      <input type="text" id="lyrics-query-input" class="text-input" placeholder="Tên bài hát để tìm...">
       <button class="text-btn text-btn--ghost" id="lyrics-search-btn">Tự động tìm lời (cần mạng)</button>
     </div>
     <ul class="lyrics-results" id="lyrics-results"></ul>
+    <button class="text-btn" id="lyrics-tap-sync-btn">⏱ Tự đồng bộ theo nhịp (không cần gõ mốc thời gian)</button>
     <textarea id="lyrics-textarea" class="text-input lyrics-textarea" rows="10" placeholder="[00:12.34] Dòng lời đầu tiên...&#10;[00:15.80] Dòng lời tiếp theo..."></textarea>
     <div class="modal-foot modal-foot--split">
       <button class="text-btn text-btn--ghost" id="lyrics-clear-btn">Xóa lời</button>
       <button class="text-btn" id="lyrics-save-btn">Lưu</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tap-to-sync overlay: build LRC timing by tapping along with playback -->
+<div class="modal-backdrop" id="tapsync-backdrop" hidden>
+  <div class="modal tapsync-modal">
+    <div class="modal-head">
+      <h3>Gõ nhịp theo bài hát</h3>
+      <span class="count mono" id="tapsync-progress">0/0</span>
+    </div>
+    <p class="sync-desc">Nhạc sẽ phát từ đầu. Bấm nút bên dưới đúng lúc câu hát <b>tiếp theo</b> bắt đầu.</p>
+    <div class="tapsync-lines">
+      <p class="tapsync-prev" id="tapsync-prev"></p>
+      <p class="tapsync-current" id="tapsync-current"></p>
+      <p class="tapsync-next" id="tapsync-next"></p>
+    </div>
+    <button class="tapsync-btn" id="tapsync-tap-btn">Bấm khi câu tiếp theo bắt đầu</button>
+    <div class="modal-foot modal-foot--split">
+      <button class="text-btn text-btn--ghost" id="tapsync-undo-btn">Lùi 1 câu</button>
+      <button class="text-btn text-btn--ghost" id="tapsync-cancel-btn">Hủy</button>
     </div>
   </div>
 </div>
