@@ -1026,6 +1026,7 @@ document.getElementById('edit-lyrics-btn').addEventListener('click', () => {
   const song = songs.find(s => s.id === id);
   document.getElementById('lyrics-textarea').value = (song && song.lyrics) || '';
   document.getElementById('lyrics-results').innerHTML = '';
+  document.getElementById('lyrics-query-input').value = song ? guessSearchQueryFromSongName(song.name) : '';
   document.getElementById('lyrics-backdrop').hidden = false;
 });
 
@@ -1049,7 +1050,7 @@ document.getElementById('lyrics-search-btn').addEventListener('click', async () 
   const song = songs.find(s => s.id === id);
   if (!song) return;
 
-  const query = guessSearchQueryFromSongName(song.name);
+  const query = document.getElementById('lyrics-query-input').value.trim() || guessSearchQueryFromSongName(song.name);
   const resultsEl = document.getElementById('lyrics-results');
   resultsEl.innerHTML = '<li class="lyrics-result-status">Đang tìm...</li>';
 
@@ -1092,6 +1093,105 @@ document.getElementById('lyrics-search-btn').addEventListener('click', async () 
     li.appendChild(btn);
     resultsEl.appendChild(li);
   });
+});
+
+/* ---------------------------------------------------------
+   Tap-to-sync: build LRC timing by tapping along with playback
+   instead of typing timestamps by hand
+   --------------------------------------------------------- */
+
+let tapSyncLines = [];
+let tapSyncIndex = 0;
+let tapSyncResults = [];
+
+function formatLRCTime(t) {
+  const m = Math.floor(t / 60);
+  const s = t - m * 60;
+  return `${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
+}
+
+function extractPlainLines(text) {
+  const timeTag = /\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]/g;
+  return (text || '')
+    .split(/\r?\n/)
+    .map(l => l.replace(timeTag, '').trim())
+    .filter(l => l.length > 0);
+}
+
+function renderTapSyncUI() {
+  document.getElementById('tapsync-progress').textContent = `${tapSyncIndex}/${tapSyncLines.length}`;
+  document.getElementById('tapsync-prev').textContent = tapSyncIndex > 0 ? tapSyncLines[tapSyncIndex - 1] : '';
+  document.getElementById('tapsync-current').textContent = tapSyncIndex < tapSyncLines.length
+    ? tapSyncLines[tapSyncIndex] : '🎉 Xong hết rồi!';
+  document.getElementById('tapsync-next').textContent = tapSyncIndex + 1 < tapSyncLines.length
+    ? tapSyncLines[tapSyncIndex + 1] : '';
+}
+
+function closeTapSync() {
+  document.getElementById('tapsync-backdrop').hidden = true;
+  audioEl.pause();
+  isPlaying = false;
+  updatePlayButton();
+}
+
+document.getElementById('lyrics-tap-sync-btn').addEventListener('click', () => {
+  const id = currentSongId();
+  if (id == null) { showToast('Chưa phát bài nào để đồng bộ'); return; }
+
+  tapSyncLines = extractPlainLines(document.getElementById('lyrics-textarea').value);
+  if (!tapSyncLines.length) {
+    showToast('Dán lời thường vào khung phía trên trước đã (mỗi câu 1 dòng)');
+    return;
+  }
+  tapSyncIndex = 0;
+  tapSyncResults = [];
+  renderTapSyncUI();
+  document.getElementById('lyrics-backdrop').hidden = true;
+  document.getElementById('tapsync-backdrop').hidden = false;
+
+  // This click is itself a direct user gesture, so it's fine for iOS to
+  // start playback from here even though we're inside a nested modal.
+  audioEl.currentTime = 0;
+  audioEl.play().then(() => {
+    isPlaying = true;
+    updatePlayButton();
+  }).catch(() => {});
+});
+
+document.getElementById('tapsync-tap-btn').addEventListener('click', () => {
+  if (tapSyncIndex >= tapSyncLines.length) return;
+  tapSyncResults.push({ time: audioEl.currentTime, text: tapSyncLines[tapSyncIndex] });
+  tapSyncIndex++;
+  renderTapSyncUI();
+
+  if (tapSyncIndex >= tapSyncLines.length) {
+    const lrcText = tapSyncResults
+      .map(r => `[${formatLRCTime(r.time)}] ${r.text}`)
+      .join('\n');
+    document.getElementById('lyrics-textarea').value = lrcText;
+    closeTapSync();
+    document.getElementById('lyrics-backdrop').hidden = false;
+    showToast('Đã đồng bộ xong — nhấn Lưu để áp dụng');
+  }
+});
+
+document.getElementById('tapsync-undo-btn').addEventListener('click', () => {
+  if (tapSyncIndex === 0) return;
+  tapSyncIndex--;
+  tapSyncResults.pop();
+  renderTapSyncUI();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !document.getElementById('tapsync-backdrop').hidden) {
+    e.preventDefault();
+    document.getElementById('tapsync-tap-btn').click();
+  }
+});
+
+document.getElementById('tapsync-cancel-btn').addEventListener('click', () => {
+  closeTapSync();
+  document.getElementById('lyrics-backdrop').hidden = false;
 });
 
 document.getElementById('lyrics-save-btn').addEventListener('click', async () => {
