@@ -219,7 +219,20 @@ button {
 .lyrics-empty-msg.show { display: block; }
 
 .lyrics-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-top: 4px;
+}
+
+.lyrics-search-row .text-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.lyrics-search-row .text-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .lyrics-results {
@@ -274,6 +287,44 @@ button {
   resize: vertical;
   min-height: 160px;
   margin-top: 10px;
+}
+
+.tapsync-modal {
+  max-width: 480px;
+}
+
+.tapsync-lines {
+  text-align: center;
+  padding: 18px 4px;
+}
+
+.tapsync-prev, .tapsync-next {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 0 0 8px;
+  min-height: 18px;
+}
+
+.tapsync-current {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent-soft);
+  margin: 0 0 8px;
+  min-height: 28px;
+}
+
+.tapsync-btn {
+  width: 100%;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.tapsync-btn:active {
+  background: var(--accent-soft);
 }
 
 .scrubber-row {
