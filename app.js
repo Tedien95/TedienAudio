@@ -80,7 +80,18 @@ let activePlaylistId = null; // which playlist detail view is open
 let pickerTargetPlaylistId = null;
 let pickerSelection = new Set();
 
-const audioEl = document.getElementById('audio-el');
+// Two physical <audio> elements so we can crossfade between tracks. `audioEl`
+// always points at whichever one is currently "active" (the one all the
+// rest of the app reads/writes); it gets reassigned when a crossfade swap
+// completes. Event listeners are attached to both fixed elements below, but
+// their logic always reads the shared `audioEl` variable rather than the
+// event source, so it stays correct regardless of which element fired.
+const audioElPrimary = document.getElementById('audio-el');
+const audioElSecondary = document.getElementById('audio-el-2');
+let audioEl = audioElPrimary;
+
+let crossfadeMode = 'off'; // 'off' | number of seconds (4 or 8)
+let crossfadeInProgress = false;
 
 /* ---------------------------------------------------------
    Helpers
@@ -534,9 +545,11 @@ async function playCurrent() {
   const song = songs.find(s => s.id === id) || await getSong(id);
   if (!song) return;
 
+  cancelCrossfadeIfAny();
   if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
   currentObjectUrl = URL.createObjectURL(song.blob);
   audioEl.src = currentObjectUrl;
+  audioEl._blobUrl = currentObjectUrl;
   currentKnownDuration = song.duration || 0;
   audioEl.play().then(() => {
     isPlaying = true;
@@ -564,6 +577,7 @@ async function playCurrent() {
 }
 
 function stopPlayback() {
+  cancelCrossfadeIfAny();
   audioEl.pause();
   audioEl.removeAttribute('src');
   audioEl.load();
@@ -611,6 +625,7 @@ function resumePlayback() {
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
     currentObjectUrl = URL.createObjectURL(song.blob);
     audioEl.src = currentObjectUrl;
+    audioEl._blobUrl = currentObjectUrl;
     audioEl.addEventListener('loadedmetadata', () => {
       if (savedTime > 0 && savedTime < (song.duration || Infinity)) {
         audioEl.currentTime = savedTime;
@@ -634,6 +649,7 @@ document.getElementById('btn-play').addEventListener('click', () => {
     return;
   }
   if (isPlaying) {
+    cancelCrossfadeIfAny();
     audioEl.pause();
     isPlaying = false;
     updatePlayButton();
@@ -692,16 +708,20 @@ repeatBtnEl.addEventListener('click', () => {
   showToast(msg);
 });
 
-audioEl.addEventListener('ended', () => {
+function handleAudioEnded() {
+  // While a crossfade is in flight, the old element can reach its natural
+  // end a beat before our manual swap finishes — ignore that, the crossfade
+  // completion handles the transition itself.
+  if (crossfadeInProgress) return;
   if (repeatMode === 'one') {
     audioEl.currentTime = 0;
     audioEl.play();
     return;
   }
   goNext(false);
-});
+}
 
-audioEl.addEventListener('timeupdate', () => {
+function handleAudioTimeUpdate() {
   // audioEl.duration can be wildly wrong on WebKit for certain VBR mp3s, so
   // prefer the duration we measured once at upload time when we have it.
   const totalDuration = currentKnownDuration > 0 ? currentKnownDuration : audioEl.duration;
@@ -723,7 +743,153 @@ audioEl.addEventListener('timeupdate', () => {
   }
 
   updateActiveLyricLine();
+
+  if (crossfadeMode !== 'off' && !crossfadeInProgress && totalDuration > 0 && isFinite(totalDuration)) {
+    const remaining = totalDuration - audioEl.currentTime;
+    if (remaining > 0 && remaining <= crossfadeMode) {
+      maybeStartCrossfade();
+    }
+  }
+}
+
+audioElPrimary.addEventListener('ended', handleAudioEnded);
+audioElSecondary.addEventListener('ended', handleAudioEnded);
+audioElPrimary.addEventListener('timeupdate', handleAudioTimeUpdate);
+audioElSecondary.addEventListener('timeupdate', handleAudioTimeUpdate);
+
+/* ---------------------------------------------------------
+   Crossfade (Spotify/Apple-Music-style smooth track transitions)
+   --------------------------------------------------------- */
+
+function peekNextInQueue() {
+  if (!queue.length) return null;
+  if (repeatMode === 'one') return { id: queue[queueIndex], index: queueIndex };
+  if (shuffleOn) {
+    const idx = Math.floor(Math.random() * queue.length);
+    return { id: queue[idx], index: idx };
+  }
+  let idx = queueIndex + 1;
+  if (idx >= queue.length) {
+    if (repeatMode === 'all') idx = 0;
+    else return null; // nothing after this — let it end naturally
+  }
+  return { id: queue[idx], index: idx };
+}
+
+function maybeStartCrossfade() {
+  const next = peekNextInQueue();
+  if (!next) return;
+  const song = songs.find(s => s.id === next.id);
+  if (!song) return;
+  startCrossfade(song, next.index);
+}
+
+function startCrossfade(song, nextIndex) {
+  crossfadeInProgress = true;
+  const fromEl = audioEl;
+  const toEl = (fromEl === audioElPrimary) ? audioElSecondary : audioElPrimary;
+  const baseVolume = fromEl.volume;
+  const durationMs = crossfadeMode * 1000;
+
+  if (toEl._blobUrl) URL.revokeObjectURL(toEl._blobUrl);
+  const url = URL.createObjectURL(song.blob);
+  toEl._blobUrl = url;
+  toEl.src = url;
+  toEl.currentTime = 0;
+  toEl.volume = 0;
+  toEl.play().catch(() => {});
+
+  const startTime = performance.now();
+  function tick(now) {
+    if (!crossfadeInProgress) return; // cancelled externally — cleanup already handled there
+    const t = Math.min(1, (now - startTime) / durationMs);
+    fromEl.volume = baseVolume * (1 - t);
+    toEl.volume = baseVolume * t;
+    if (t < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      finishCrossfade(fromEl, toEl, song, nextIndex, baseVolume);
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+function cancelCrossfadeIfAny() {
+  if (!crossfadeInProgress) return;
+  crossfadeInProgress = false;
+  const other = (audioEl === audioElPrimary) ? audioElSecondary : audioElPrimary;
+  other.pause();
+  if (other._blobUrl) { URL.revokeObjectURL(other._blobUrl); other._blobUrl = null; }
+  other.removeAttribute('src');
+  other.load();
+  const sliderVol = Number(document.getElementById('volume-slider').value) / 100;
+  audioEl.volume = isFinite(sliderVol) ? sliderVol : 1;
+}
+
+function finishCrossfade(fromEl, toEl, song, nextIndex, baseVolume) {
+  fromEl.pause();
+  if (fromEl._blobUrl) { URL.revokeObjectURL(fromEl._blobUrl); fromEl._blobUrl = null; }
+  fromEl.removeAttribute('src');
+  fromEl.load();
+  fromEl.volume = baseVolume;
+  toEl.volume = baseVolume;
+
+  audioEl = toEl;
+  currentObjectUrl = toEl._blobUrl;
+  queueIndex = nextIndex;
+  currentKnownDuration = song.duration || 0;
+
+  document.getElementById('np-title').textContent = song.name;
+  document.getElementById('np-sub').textContent = 'Đang phát';
+  renderLibrary();
+  if (activePlaylistId != null) renderPlaylistDetail(activePlaylistId);
+  loadLyricsForCurrentSong();
+
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: song.name,
+      artist: 'Máy nghe nhạc của tôi',
+      artwork: [
+        { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }
+      ]
+    });
+    navigator.mediaSession.playbackState = 'playing';
+  }
+
+  crossfadeInProgress = false;
+}
+
+const CROSSFADE_STORAGE_KEY = 'musicPlayerCrossfade';
+const crossfadeSteps = ['off', 4, 8];
+
+function applyCrossfadeMode(mode) {
+  crossfadeMode = mode;
+  const btn = document.getElementById('btn-crossfade');
+  const label = document.getElementById('crossfade-label');
+  btn.classList.toggle('active', mode !== 'off');
+  label.textContent = mode === 'off' ? 'Off' : `${mode}s`;
+  try { localStorage.setItem(CROSSFADE_STORAGE_KEY, String(mode)); } catch (e) { /* ignore */ }
+}
+
+document.getElementById('btn-crossfade').addEventListener('click', () => {
+  const idx = crossfadeSteps.indexOf(crossfadeMode);
+  const next = crossfadeSteps[(idx + 1) % crossfadeSteps.length];
+  applyCrossfadeMode(next);
+  const msg = next === 'off' ? 'Đã tắt chuyển bài mượt'
+    : `Đã bật chuyển bài mượt (${next} giây)`;
+  showToast(msg);
 });
+
+function restoreCrossfadeMode() {
+  let stored = 'off';
+  try {
+    const raw = localStorage.getItem(CROSSFADE_STORAGE_KEY);
+    if (raw != null) stored = raw === 'off' ? 'off' : Number(raw);
+  } catch (e) { /* ignore */ }
+  if (!crossfadeSteps.includes(stored)) stored = 'off';
+  applyCrossfadeMode(stored);
+}
 
 let isScrubbing = false;
 const scrubberEl = document.getElementById('scrubber');
@@ -747,6 +913,7 @@ if ('mediaSession' in navigator) {
   };
   safeSetHandler('play', () => resumePlayback());
   safeSetHandler('pause', () => {
+    cancelCrossfadeIfAny();
     audioEl.pause();
     isPlaying = false;
     updatePlayButton();
@@ -1268,6 +1435,7 @@ async function init() {
   renderLibrary();
   renderPlaylists();
   restoreVolume();
+  restoreCrossfadeMode();
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
