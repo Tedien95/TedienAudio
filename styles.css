@@ -443,6 +443,18 @@ button {
   max-width: 160px;
 }
 
+#btn-crossfade {
+  flex-shrink: 0;
+  gap: 4px;
+  font-size: 11px;
+  padding: 4px 6px;
+}
+
+.crossfade-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
 /* ---------- Tabs ---------- */
 
 .tabs {
